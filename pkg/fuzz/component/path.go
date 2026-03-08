@@ -11,12 +11,14 @@ import (
 	urlutil "github.com/projectdiscovery/utils/url"
 )
 
-// Path is a component for a request Path
+// Path is a component for a request Path.
+// It maintains an immutable snapshot of the original path to ensure
+// deterministic rebuilds even when segments are modified during fuzzing.
 type Path struct {
 	value *Value
 
 	req          *retryablehttp.Request
-	originalPath string
+	originalPath string // immutable snapshot of the original path at parse time
 }
 
 var _ Component = &Path{}
@@ -31,8 +33,9 @@ func (q *Path) Name() string {
 	return RequestPathComponent
 }
 
-// Parse parses the component and returns the
-// parsed component
+// Parse parses the request path into numbered segments using 1-based indexing.
+// It captures an immutable snapshot of the original path and stores segments
+// in an ordered map to preserve insertion order and support empty segments.
 func (q *Path) Parse(req *retryablehttp.Request) (bool, error) {
 	q.req = req
 	q.originalPath = req.Path
@@ -89,8 +92,9 @@ func (q *Path) Delete(key string) error {
 	return nil
 }
 
-// Rebuild returns a new request with the
-// component rebuilt
+// Rebuild reconstructs the request path from the original snapshot and any
+// modified segments. It preserves empty segments (repeated/trailing slashes)
+// and deep-copies the URL to prevent mutation of the original request.
 func (q *Path) Rebuild() (*retryablehttp.Request, error) {
 	// Get the original path segments from the immutable snapshot captured at parse time.
 	originalSplitted := strings.Split(q.originalPath, "/")
@@ -151,7 +155,8 @@ func (q *Path) Rebuild() (*retryablehttp.Request, error) {
 	return cloned, nil
 }
 
-// Clones current state to a new component
+// Clone creates a deep copy of the Path component including the value,
+// request, and original path snapshot.
 func (q *Path) Clone() Component {
 	return &Path{
 		value:        q.value.Clone(),
