@@ -104,13 +104,15 @@ func (q *Path) Rebuild() (*retryablehttp.Request, error) {
 	for i := 1; i < len(originalSplitted); i++ {
 		originalSegment := originalSplitted[i]
 		if originalSegment == "" {
-			// Skip empty segments
+			// Preserve empty segments (e.g., from "/a//b/" or trailing slash)
+			rebuiltSegments = append(rebuiltSegments, "")
 			continue
 		}
 
 		// Check if we have a replacement for this segment
 		key := strconv.Itoa(segmentIndex)
-		if newValue, ok := q.value.parsed.Get(key).(string); ok && newValue != "" {
+		if newValue, ok := q.value.parsed.Get(key).(string); ok {
+			// Use the replacement value even if it's an empty string
 			rebuiltSegments = append(rebuiltSegments, newValue)
 		} else {
 			rebuiltSegments = append(rebuiltSegments, originalSegment)
@@ -131,8 +133,31 @@ func (q *Path) Rebuild() (*retryablehttp.Request, error) {
 		rebuiltPath = unescaped
 	}
 
-	// Clone the request and update the path
+	// Clone the request and deep copy the URL to prevent mutation
 	cloned := q.req.Clone(context.Background())
+	// Deep copy the retryablehttp.Request.URL (urlutil.URL) and its embedded *url.URL
+	// to prevent mutation of the original request
+	if cloned.URL != nil {
+		urlCopy := *cloned.URL
+		if urlCopy.URL != nil {
+			stdURLCopy := *urlCopy.URL
+			if stdURLCopy.User != nil {
+				userCopy := *stdURLCopy.User
+				stdURLCopy.User = &userCopy
+			}
+			urlCopy.URL = &stdURLCopy
+		}
+		cloned.URL = &urlCopy
+	}
+	// Also deep copy the underlying http.Request.URL
+	if cloned.Request != nil && cloned.Request.URL != nil {
+		urlCopy := *cloned.Request.URL
+		if urlCopy.User != nil {
+			userCopy := *urlCopy.User
+			urlCopy.User = &userCopy
+		}
+		cloned.Request.URL = &urlCopy
+	}
 	if err := cloned.UpdateRelPath(rebuiltPath, true); err != nil {
 		cloned.RawPath = rebuiltPath
 	}

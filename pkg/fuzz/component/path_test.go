@@ -157,3 +157,94 @@ func TestPathComponent_DeterministicOrder(t *testing.T) {
 		require.Equal(t, []string{"user", "55", "profile"}, values, "run %d: values must be in insertion order", run)
 	}
 }
+
+func TestPathComponent_EmptySegmentsPreserved(t *testing.T) {
+	// Test that empty path segments (e.g., from "/a//b/" or trailing slash) are preserved
+	testCases := []struct {
+		name         string
+		inputPath    string
+		expectedPath string
+	}{
+		{
+			name:         "double slash in middle",
+			inputPath:    "https://example.com/a//b",
+			expectedPath: "/a//b",
+		},
+		{
+			name:         "trailing slash",
+			inputPath:    "https://example.com/a/b/",
+			expectedPath: "/a/b/",
+		},
+		{
+			name:         "multiple empty segments",
+			inputPath:    "https://example.com/a///b/",
+			expectedPath: "/a///b/",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			path := NewPath()
+			req, err := retryablehttp.NewRequest(http.MethodGet, tc.inputPath, nil)
+			require.NoError(t, err)
+
+			found, err := path.Parse(req)
+			require.NoError(t, err)
+			require.True(t, found)
+
+			rebuilt, err := path.Rebuild()
+			require.NoError(t, err)
+			require.Equal(t, tc.expectedPath, rebuilt.Path, "empty segments should be preserved")
+		})
+	}
+}
+
+func TestPathComponent_RebuildUsesOriginalPathSnapshot(t *testing.T) {
+	// Test that Rebuild() doesn't mutate the original request
+	path := NewPath()
+	req, err := retryablehttp.NewRequest(http.MethodGet, "https://example.com/user/123/profile", nil)
+	require.NoError(t, err)
+
+	originalPath := req.Path
+	originalURL := req.URL.String()
+
+	found, err := path.Parse(req)
+	require.NoError(t, err)
+	require.True(t, found)
+
+	// Modify a segment
+	err = path.SetValue("2", "456")
+	require.NoError(t, err)
+
+	// Rebuild should not mutate the original request
+	rebuilt, err := path.Rebuild()
+	require.NoError(t, err)
+
+	// Verify the original request is unchanged
+	require.Equal(t, originalPath, req.Path, "original request path should not be mutated")
+	require.Equal(t, originalURL, req.URL.String(), "original request URL should not be mutated")
+
+	// Verify the rebuilt request has the new value
+	require.Equal(t, "/user/456/profile", rebuilt.Path, "rebuilt path should have the new value")
+}
+
+func TestPathComponent_ExplicitEmptyReplacement(t *testing.T) {
+	// Test that explicit empty replacement values are respected (not treated as "missing")
+	path := NewPath()
+	req, err := retryablehttp.NewRequest(http.MethodGet, "https://example.com/user/123/profile", nil)
+	require.NoError(t, err)
+
+	found, err := path.Parse(req)
+	require.NoError(t, err)
+	require.True(t, found)
+
+	// Explicitly set a segment to an empty string
+	err = path.SetValue("2", "")
+	require.NoError(t, err)
+
+	rebuilt, err := path.Rebuild()
+	require.NoError(t, err)
+
+	// The empty replacement should be used, resulting in "/user//profile"
+	require.Equal(t, "/user//profile", rebuilt.Path, "explicit empty replacement should be respected")
+}
